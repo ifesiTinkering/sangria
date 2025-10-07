@@ -26,7 +26,7 @@ impl ResolverClient {
     ) -> Arc<Self> {
         Arc::new(ResolverClient {
             resolver: Arc::new(Resolver::new(
-                GroupCommit::new(range_client, tx_state_store),
+                GroupCommit::new(range_client, tx_state_store, false, 0.0),
                 bg_runtime,
             )),
         })

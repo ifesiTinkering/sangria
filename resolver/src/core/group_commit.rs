@@ -1,11 +1,12 @@
 use crate::core::resolver::TransactionInfo;
 use common::full_range_id::FullRangeId;
 use coordinator_rangeclient::{error::Error, rangeclient::RangeClient};
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
-use tracing::info;
+use tracing::{error, info};
 use tx_state_store::client::Client as TxStateStoreClient;
 use uuid::Uuid;
 
@@ -34,10 +35,17 @@ pub struct GroupCommit {
     tx_state_store: Arc<TxStateStoreClient>,
     stats: Arc<RwLock<GroupCommitStats>>,
     returned_transactions: Arc<RwLock<Vec<TransactionInfo>>>,
+    enable_cascading_abort: bool,
+    abort_injection_rate: f64,
 }
 
 impl GroupCommit {
-    pub fn new(range_client: Arc<RangeClient>, tx_state_store: Arc<TxStateStoreClient>) -> Self {
+    pub fn new(
+        range_client: Arc<RangeClient>,
+        tx_state_store: Arc<TxStateStoreClient>,
+        enable_cascading_abort: bool,
+        abort_injection_rate: f64,
+    ) -> Self {
         GroupCommit {
             state: Arc::new(RwLock::new(State {
                 group_per_participant: HashMap::new(),
@@ -48,6 +56,8 @@ impl GroupCommit {
             tx_state_store,
             stats: Arc::new(RwLock::new(GroupCommitStats::default())),
             returned_transactions: Arc::new(RwLock::new(Vec::new())),
+            enable_cascading_abort,
+            abort_injection_rate,
         }
     }
 
@@ -224,7 +234,10 @@ impl GroupCommit {
         Ok(())
     }
 
-    pub async fn commit(&self) -> Result<Vec<TransactionInfo>, Error> {
+    pub async fn commit<F>(&self, on_abort: F) -> Result<Vec<TransactionInfo>, Error>
+    where
+        F: Fn(Vec<Uuid>) + Send + Sync + Clone + 'static,
+    {
         let mut commit_join_set = {
             let mut non_empty_groups = HashSet::new();
             {
@@ -247,6 +260,9 @@ impl GroupCommit {
                 let non_empty_groups_clone = self.non_empty_groups.clone();
                 let stats_clone = self.stats.clone();
                 let returned_transactions_clone = self.returned_transactions.clone();
+                let enable_cascading_abort = self.enable_cascading_abort;
+                let abort_injection_rate = self.abort_injection_rate;
+                let on_abort_clone = on_abort.clone();
 
                 commit_join_set.spawn(async move {
                     // Acquire the write lock to clear the group
@@ -276,20 +292,47 @@ impl GroupCommit {
                         // Fake transaction: sleep to emulate the time it takes to commit in the ranges
                         // tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                     } else {
-                        // TODO: Handle cascading aborts
-                        // TODO: Does order of tx_ids matter in the tx_state_store?
                         // NOTE: A transaction will be recorded as committed in the tx_state_store once per every participant range it is part of.
                         // Log all transactions of the group that are ready to commit as committed in the tx_state_store
-                        let tx_ids_vec = transactions.iter().map(|tx| tx.id).collect();
+                        let tx_ids_vec: Vec<Uuid> = transactions.iter().map(|tx| tx.id).collect();
+
+                        // Failure injection for testing cascading abort
+                        if abort_injection_rate > 0.0 {
+                            let mut rng = rand::thread_rng();
+                            if rng.gen::<f64>() < abort_injection_rate {
+                                error!("INJECTING ABORT for testing! Transactions: {:?}", tx_ids_vec);
+                                if enable_cascading_abort {
+                                    on_abort_clone(tx_ids_vec.clone());
+                                    return Err(Error::InternalError(Arc::new(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        "Injected failure for testing",
+                                    ))));
+                                } else {
+                                    panic!("Injected failure (cascading abort disabled)");
+                                }
+                            }
+                        }
 
                         if let Err(e) = tx_state_store_clone
                             .try_batch_commit_transactions(&tx_ids_vec, 0)
                             .await
                         {
-                            panic!(
-                                "Error committing transactions to tx_state_store {:?}: {:?}",
-                                participant_range_clone, e
-                            );
+                            if enable_cascading_abort {
+                                error!(
+                                    "Batch commit failed for range {:?}: {:?}. Triggering cascading abort.",
+                                    participant_range_clone, e
+                                );
+                                on_abort_clone(tx_ids_vec.clone());
+                                return Err(Error::InternalError(Arc::new(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    format!("Batch commit failed: {:?}", e),
+                                ))));
+                            } else {
+                                panic!(
+                                    "Error committing transactions to tx_state_store {:?}: {:?}",
+                                    participant_range_clone, e
+                                );
+                            }
                         }
                         // Notify participant so that:
                         // - it applies the TXs' PrepareRecords in storage

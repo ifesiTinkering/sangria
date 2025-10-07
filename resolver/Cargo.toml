@@ -33,3 +33,4 @@ hex = "0.4"
 tx_state_store = { version = "0.1.0", path = "../tx_state_store" }
 affinity = "0.1.2"
 nix = { version = "0.27.1", features = ["sched"] }
+rand = "0.8"

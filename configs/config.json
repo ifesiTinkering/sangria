@@ -2,6 +2,8 @@
     "commit_strategy": "Pipelined",
     "heuristic": "OpenClients",
     "print_lock_table_state": false,
+    "enable_cascading_abort": true,
+    "abort_injection_rate": 0.0,
     "range_server": {
         "wal_buffer_capacity": 1000,
         "wal_buffer_flush_interval": {

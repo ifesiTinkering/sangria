@@ -131,7 +131,12 @@ fn main() {
             fast_network,
         ));
         let tx_state_store = Arc::new(TxStateStoreClient::new(config.clone(), zone.region).await);
-        let group_commit = GroupCommit::new(range_client, tx_state_store);
+        let group_commit = GroupCommit::new(
+            range_client,
+            tx_state_store,
+            config.enable_cascading_abort,
+            config.abort_injection_rate,
+        );
         let resolver = Arc::new(Resolver::new(group_commit, bg_runtime_clone.clone()));
         let resolver_server = ResolverServer::new(config, resolver);
         ResolverServer::start(resolver_server, bg_runtime_clone).await;

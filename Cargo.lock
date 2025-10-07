@@ -1548,6 +1548,7 @@ dependencies = [
  "portpicker",
  "prost",
  "proto",
+ "rand",
  "scylla 0.13.2",
  "serde",
  "serde_json",

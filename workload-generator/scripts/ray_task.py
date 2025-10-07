@@ -107,6 +107,13 @@ def run_workload(config):
         atomix_setup.servers_config["resolver"][
             "background_runtime_core_ids"
         ] = resolver_background_runtime_core_ids
+
+        # Add cascading abort config parameters if present
+        if "enable_cascading_abort" in config:
+            atomix_setup.servers_config["enable_cascading_abort"] = config["enable_cascading_abort"]
+        if "abort_injection_rate" in config:
+            atomix_setup.servers_config["abort_injection_rate"] = config["abort_injection_rate"]
+
         atomix_setup.dump_servers_config()
         atomix_setup.kill_servers()
         atomix_setup.reset_cassandra()

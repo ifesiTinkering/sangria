@@ -177,6 +177,8 @@ pub struct Config {
     pub commit_strategy: CommitStrategy,
     pub heuristic: Heuristic,
     pub print_lock_table_state: bool,
+    pub enable_cascading_abort: bool,
+    pub abort_injection_rate: f64,
     pub range_server: RangeServerConfig,
     pub epoch: EpochConfig,
     pub universe: UniverseConfig,

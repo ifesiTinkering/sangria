@@ -4,14 +4,14 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{RwLock, oneshot};
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::{
     core::{group_commit::GroupCommit, statistics::StatisticsTracker},
     participant_range_info::ParticipantRangeInfo,
 };
-use coordinator_rangeclient::error::Error;
+use coordinator_rangeclient::error::{Error, TransactionAbortReason};
 
 #[derive(Clone, Debug)]
 pub struct TransactionInfo {
@@ -38,6 +38,7 @@ impl TransactionInfo {
 pub struct State {
     info_per_transaction: HashMap<Uuid, TransactionInfo>,
     resolved_transactions: HashSet<Uuid>,
+    aborted_transactions: HashSet<Uuid>,
 }
 
 pub struct Resolver {
@@ -54,6 +55,7 @@ impl Resolver {
             state: RwLock::new(State {
                 info_per_transaction: HashMap::new(),
                 resolved_transactions: HashSet::new(),
+                aborted_transactions: HashSet::new(),
             }),
             group_commit,
             waiting_transactions: RwLock::new(HashMap::new()),
@@ -83,6 +85,17 @@ impl Resolver {
         {
             let mut state = resolver.state.write().await;
             for dependency in dependencies {
+                if state.aborted_transactions.contains(&dependency) {
+                    // Dependency was aborted! This transaction should abort immediately
+                    info!(
+                        "Transaction {} depends on aborted transaction {}, aborting",
+                        transaction_id, dependency
+                    );
+                    return Err(Error::TransactionAborted(
+                        TransactionAbortReason::DependencyAborted,
+                    ));
+                }
+
                 if !state.resolved_transactions.contains(&dependency) {
                     // Dependency is not yet resolved, so we need to wait for it
                     num_pending_dependencies += 1;
@@ -140,8 +153,23 @@ impl Resolver {
             }
         }
 
-        // Block until the transaction is actually committed
+        // Block until the transaction is actually committed OR aborted
         r.await.unwrap();
+
+        // Check if transaction was aborted while waiting
+        {
+            let state = resolver.state.read().await;
+            if state.aborted_transactions.contains(&transaction_id) {
+                info!(
+                    "Transaction {} was aborted due to cascading abort",
+                    transaction_id
+                );
+                return Err(Error::TransactionAborted(
+                    TransactionAbortReason::CascadingAbort,
+                ));
+            }
+        }
+
         info!("Transaction {} finally committed!", transaction_id);
         Ok(())
     }
@@ -154,7 +182,18 @@ impl Resolver {
             "Triggering commit for transactions {:?}",
             transactions.iter().map(|tx| tx.id).collect::<Vec<_>>()
         );
-        let finished_transactions = resolver.group_commit.commit().await?;
+        let resolver_clone = resolver.clone();
+        let on_abort = move |aborted_tx_ids: Vec<Uuid>| {
+            let resolver_inner = resolver_clone.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    Resolver::register_aborted_transactions(resolver_inner, aborted_tx_ids).await
+                {
+                    error!("Failed to register aborted transactions: {:?}", e);
+                }
+            });
+        };
+        let finished_transactions = resolver.group_commit.commit(on_abort).await?;
         let finished_transactions_ids = finished_transactions
             .iter()
             .map(|tx| tx.id)
@@ -264,6 +303,60 @@ impl Resolver {
             });
         }
         Ok(())
+    }
+
+    pub async fn register_aborted_transactions(
+        resolver: Arc<Self>,
+        aborted_transaction_ids: Vec<Uuid>,
+    ) -> Result<Vec<Uuid>, Error> {
+        let mut cascaded_aborts = Vec::new();
+
+        {
+            let mut state = resolver.state.write().await;
+            let mut aborts_to_propagate = aborted_transaction_ids.clone();
+
+            // Process each failed transaction and find its dependents
+            while !aborts_to_propagate.is_empty() {
+                let abort_tx_id = aborts_to_propagate.pop().unwrap();
+
+                // Mark this transaction as aborted
+                state.aborted_transactions.insert(abort_tx_id);
+
+                if let Some(transaction_info) = state.info_per_transaction.get_mut(&abort_tx_id) {
+                    // Get all transactions waiting for this failed one
+                    let dependents = mem::take(&mut transaction_info.dependents);
+
+                    for dependent_id in dependents {
+                        // Check if dependent hasn't already been resolved or aborted
+                        if !state.resolved_transactions.contains(&dependent_id)
+                            && !state.aborted_transactions.contains(&dependent_id)
+                        {
+                            // This dependent must also be aborted!
+                            aborts_to_propagate.push(dependent_id);
+                            cascaded_aborts.push(dependent_id);
+
+                            info!(
+                                "Cascading abort from {} to dependent {}",
+                                abort_tx_id, dependent_id
+                            );
+                        }
+                    }
+                }
+
+                // Wake up any transactions waiting for the aborted transaction
+                if let Some(sender) = resolver.waiting_transactions.write().await.remove(&abort_tx_id)
+                {
+                    let _ = sender.send(()); // This will cause waiting transaction to check abort status
+                }
+            }
+        }
+
+        info!(
+            "Cascaded abort to {} transactions: {:?}",
+            cascaded_aborts.len(),
+            cascaded_aborts
+        );
+        Ok(cascaded_aborts)
     }
 
     // ---------------------- Statistics ----------------------

@@ -11,6 +11,8 @@ pub enum TransactionAbortReason {
     RangePartitioningChanged,
     TransactionTimeout,
     PrepareFailed,
+    CascadingAbort,
+    DependencyAborted,
     Other,
 }
 

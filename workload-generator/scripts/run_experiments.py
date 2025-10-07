@@ -345,6 +345,57 @@ def run_experiment(
     plot_results_df(experiment_name, fixed_params, free_params)
 
 
+def cascading_abort_stress_test_experiment(ray_logs_dir):
+    """
+    Test cascading abort with artificially injected failures.
+    Runs ~32 configurations in 15-20 minutes.
+    """
+    experiment_name = "cascading_abort_stress_test"
+
+    BASELINES = [PIPELINED, ADAPTIVE]  # Skip Traditional - doesn't use resolver
+    CASCADING_ABORT_ENABLED = [True, False]
+    ABORT_INJECTION_RATE = [0.0, 0.1, 0.2, 0.3]
+    NUM_ITERATIONS = 1
+    NUM_QUERIES = [500]
+    NUM_KEYS = [50]
+    MAX_CONCURRENCY = ["25", "100"]
+    ZIPFIAN_CONSTANT = [0.9]  # High contention to trigger dependencies
+    WORKLOAD_TYPE = ["custom"]
+
+    fixed_params = {
+        "num_iterations": NUM_ITERATIONS,
+        "num_queries": NUM_QUERIES,
+        "num_keys": NUM_KEYS,
+        "workload_type": WORKLOAD_TYPE,
+        "zipfian_constant": ZIPFIAN_CONSTANT,
+    }
+
+    free_params = {
+        "baseline": BASELINES,
+        "max_concurrency": MAX_CONCURRENCY,
+        "enable_cascading_abort": CASCADING_ABORT_ENABLED,
+        "abort_injection_rate": ABORT_INJECTION_RATE,
+    }
+
+    for baseline in BASELINES:
+        results = run_and_retrieve(
+            experiment_name,
+            baseline,
+            fixed_params,
+            free_params,
+            local_mode=LOCAL_MODE,
+            build=BUILD_ATOMIX,
+        )
+        analysis = ExperimentAnalysis.from_experiment_output_df(
+            pd.DataFrame(results), ray_logs_dir / experiment_name
+        )
+        analysis.results_df.to_csv(
+            ray_logs_dir / experiment_name / f"{baseline}_results.csv"
+        )
+
+    plot_results_df(experiment_name, fixed_params, free_params)
+
+
 def main():
     ray.init()
     ray_logs_dir = Path(RAY_LOGS_DIR)
@@ -353,11 +404,12 @@ def main():
     if BUILD_ATOMIX:
         atomix_setup.build_servers()
 
-    tradeoff_contention_vs_resolver_capacity_experiment(ray_logs_dir)
+    #tradeoff_contention_vs_resolver_capacity_experiment(ray_logs_dir)
     # runtime_variations_contention_experiment(ray_logs_dir)
     # runtime_variations_resolver_capacity_experiment(ray_logs_dir)
     # mixed_workload_experiment(ray_logs_dir)
     #ycsb_experiment(ray_logs_dir)
+    cascading_abort_stress_test_experiment(ray_logs_dir)
     ray.shutdown()
 
 
