@@ -449,7 +449,7 @@ def main():
     # mixed_workload_experiment(ray_logs_dir)
     #ycsb_experiment(ray_logs_dir)
     #cascading_abort_stress_test_experiment(ray_logs_dir)
-    cascading_abort_enabled_vs_disabled_experiment(ray_logs_dir)
+    cascading_abort_stress_test_experiment(ray_logs_dir)
     ray.shutdown()
 
 
