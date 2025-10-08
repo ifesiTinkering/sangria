@@ -299,7 +299,7 @@ impl GroupCommit {
                         // Failure injection for testing cascading abort
                         if abort_injection_rate > 0.0 {
                             let mut rng = rand::thread_rng();
-                            if rng.gen::<f64>() < abort_injection_rate {
+                            if rng.r#gen::<f64>() < abort_injection_rate {
                                 error!("INJECTING ABORT for testing! Transactions: {:?}", tx_ids_vec);
                                 if enable_cascading_abort {
                                     on_abort_clone(tx_ids_vec.clone());
