@@ -442,7 +442,9 @@ def run_experiment_with_cascading_abort(
         storage_path=ray_logs_dir,
         name=experiment_name,
         local_dir=ray_logs_dir,
-        search_alg=GridSearcherInOrder(config),
+        search_alg=GridSearcherInOrder(
+            atomix_setup, NUM_ITERATIONS, config, experiment_name, ray_logs_dir
+        ),
         scheduler=FIFOScheduler(),
     )
     print(
