@@ -437,7 +437,7 @@ def run_experiment_with_cascading_abort(
     analysis = tune.run(
         tune.with_parameters(run_workload),
         config={},
-        num_samples=prod([len(v) for v in list(config.values())]) * NUM_ITERATIONS,
+        num_samples=prod([len(v) for v in list(config.values()) if isinstance(v, list)]) * NUM_ITERATIONS,
         resources_per_trial={"cpu": psutil.cpu_count()},
         storage_path=ray_logs_dir,
         name=experiment_name,
