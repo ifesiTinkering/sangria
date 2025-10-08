@@ -355,7 +355,7 @@ def cascading_abort_stress_test_experiment(ray_logs_dir):
     ZIPFIAN_CONSTANT = [0.9]  # High contention to trigger dependencies
     NUM_QUERIES = [500]
     NUM_KEYS = [50]
-    MAX_CONCURRENCY = ["25"]
+    MAX_CONCURRENCY = ["25", "50"]  # Two values for plotting
     WORKLOAD_TYPE = ["custom"]
     RESOLVER_TX_LOAD = [
         {
@@ -370,9 +370,8 @@ def cascading_abort_stress_test_experiment(ray_logs_dir):
         "num_queries": NUM_QUERIES[0],
         "zipf_exponent": ZIPFIAN_CONSTANT[0],
         "num_keys": NUM_KEYS[0],
-        "max_concurrency": MAX_CONCURRENCY[0],
     }
-    free_params = "resolver_tx_load_concurrency"
+    free_params = "resolver_tx_load_concurrency,max_concurrency"
 
     # Just use the standard run_experiment function
     run_experiment(
