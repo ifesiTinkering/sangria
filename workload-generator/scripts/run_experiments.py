@@ -348,14 +348,14 @@ def run_experiment(
 def cascading_abort_stress_test_experiment(ray_logs_dir):
     """
     Test cascading abort with artificially injected failures.
-    Runs ~32 configurations in 15-20 minutes.
+    Simple test with just basic variations.
     """
     BASELINES = [PIPELINED, ADAPTIVE]  # Skip Traditional - doesn't use resolver
     NUM_ITERATIONS = 1
     ZIPFIAN_CONSTANT = [0.9]  # High contention to trigger dependencies
     NUM_QUERIES = [500]
     NUM_KEYS = [50]
-    MAX_CONCURRENCY = ["25", "100"]
+    MAX_CONCURRENCY = ["25"]
     WORKLOAD_TYPE = ["custom"]
     RESOLVER_TX_LOAD = [
         {
@@ -370,11 +370,12 @@ def cascading_abort_stress_test_experiment(ray_logs_dir):
         "num_queries": NUM_QUERIES[0],
         "zipf_exponent": ZIPFIAN_CONSTANT[0],
         "num_keys": NUM_KEYS[0],
+        "max_concurrency": MAX_CONCURRENCY[0],
     }
-    free_params = "enable_cascading_abort,abort_injection_rate,max_concurrency"
+    free_params = "resolver_tx_load_concurrency"
 
-    # Run experiment with cascading abort variations
-    run_experiment_with_cascading_abort(
+    # Just use the standard run_experiment function
+    run_experiment(
         BASELINES,
         RESOLVER_TX_LOAD,
         NUM_ITERATIONS,
@@ -386,69 +387,6 @@ def cascading_abort_stress_test_experiment(ray_logs_dir):
         ray_logs_dir,
         fixed_params,
         free_params,
-    )
-
-
-def run_experiment_with_cascading_abort(
-    BASELINES,
-    RESOLVER_TX_LOAD,
-    NUM_ITERATIONS,
-    NUM_QUERIES,
-    NUM_KEYS,
-    MAX_CONCURRENCY,
-    ZIPFIAN_CONSTANT,
-    WORKLOAD_TYPE,
-    ray_logs_dir,
-    fixed_params,
-    free_params,
-):
-    namespace, name = generate_slug(2).split("-")
-    experiment_name = f"{namespace}_{name}"
-
-    RESOLVER_CAPACITY = [
-        {
-            "cpu_percentage": 1,
-            "background_runtime_core_ids": [1],
-        },
-    ]
-
-    # Cascading abort test parameters
-    CASCADING_ABORT_ENABLED = [True, False]
-    ABORT_INJECTION_RATE = [0.0, 0.1, 0.2, 0.3]
-
-    config = {
-        "baseline": BASELINES,
-        "num_keys": NUM_KEYS,
-        "max_concurrency": MAX_CONCURRENCY,
-        "resolver_capacity": RESOLVER_CAPACITY,
-        "resolver_tx_load": RESOLVER_TX_LOAD,
-        "num_queries": NUM_QUERIES,
-        "zipf_exponent": ZIPFIAN_CONSTANT,
-        "namespace": namespace,
-        "name": name,
-        "background_runtime_core_ids": list(range(3, 32)),
-        "workload_type": WORKLOAD_TYPE,
-        "seed": tune.randint(0, 2**32 - 1),
-        "resolver_cores": [1],
-        "enable_cascading_abort": CASCADING_ABORT_ENABLED,
-        "abort_injection_rate": ABORT_INJECTION_RATE,
-    }
-
-    analysis = tune.run(
-        tune.with_parameters(run_workload),
-        config={},
-        num_samples=prod([len(v) for v in list(config.values()) if isinstance(v, list)]) * NUM_ITERATIONS,
-        resources_per_trial={"cpu": psutil.cpu_count()},
-        storage_path=ray_logs_dir,
-        name=experiment_name,
-        local_dir=ray_logs_dir,
-        search_alg=GridSearcherInOrder(
-            atomix_setup, NUM_ITERATIONS, config, experiment_name, ray_logs_dir
-        ),
-        scheduler=FIFOScheduler(),
-    )
-    print(
-        f"python {Path(__file__).parent}/plot_experiments.py --experiment-name {experiment_name} --fixed-params {','.join([f'{k}={v}' for k, v in fixed_params.items()])} --free-params {free_params}"
     )
 
 
